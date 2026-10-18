@@ -59,7 +59,10 @@ module.exports = function getConfigProperties() {
     clientExtensions: config.get('clientExtensions') || {},
     enableDeveloperExperiments: config.get('enableDeveloperExperiments') || false,
     stripeDirect: config.get('stripeDirect'),
-    mailgunIsConfigured: !!(config.get('bulkEmail') && config.get('bulkEmail').mailgun),
+    mailgunIsConfigured: !!(
+      config.get('bulkEmail') &&
+      (config.get('bulkEmail').mailgun || config.get('bulkEmail').brevo?.apiKey)
+    ),
     emailAnalytics: config.get('emailAnalytics:enabled'),
     hostSettings: sanitizeHostSettings(config.get('hostSettings')),
     klipy: config.get('klipy'),

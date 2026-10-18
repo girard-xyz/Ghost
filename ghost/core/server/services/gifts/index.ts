@@ -51,7 +51,7 @@ export function init(options: GiftServiceInitOptions): void {
   const emailAnalyticsJobs = require('../email-analytics/jobs');
 
   const { GhostMailer } = require('../../lib/mail');
-  const MailgunClient = require('../../lib/mailgun/mailgun-client');
+  const { createBulkMailClient } = require('../../lib/bulk-mail');
   const config = require('../../../shared/config');
   const settingsCache = require('../../../shared/settings-cache');
   const urlUtils = require('../../../shared/url-utils').default;
@@ -76,7 +76,7 @@ export function init(options: GiftServiceInitOptions): void {
   const giftEmailService = new GiftEmailService({
     config,
     transactionalMailer: new GhostMailer(),
-    bulkMailer: new MailgunClient({ config, settings: settingsCache }),
+    bulkMailer: createBulkMailClient({ config, settings: settingsCache }),
     settingsCache,
     urlUtils,
     getFromAddress: () => emailAddressParser.stringify(settingsHelpers.getDefaultEmail()),

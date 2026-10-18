@@ -10,6 +10,7 @@ import {
 import type { BatchEventProcessor } from './batch-event-processor';
 import type { Queries } from './lib/queries';
 import { fetchMailgunEvents } from './fetch-mailgun-events';
+import { fetchBrevoEvents } from './fetch-brevo-events';
 
 export class EmailAnalyticsServiceWrapper {
   #logName: string;
@@ -59,7 +60,9 @@ export class EmailAnalyticsServiceWrapper {
 
     this.#service = new EmailAnalyticsService({
       fetchEvents: (options) =>
-        fetchMailgunEvents({ ...options, config, settings: settingsCache, tags: mailgunTags }),
+        config.get('bulkEmail:provider') === 'brevo'
+          ? fetchBrevoEvents({ ...options, config, settings: settingsCache })
+          : fetchMailgunEvents({ ...options, config, settings: settingsCache, tags: mailgunTags }),
       queries,
       jobNames,
       cursorSeed,

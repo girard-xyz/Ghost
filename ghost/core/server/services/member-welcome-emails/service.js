@@ -9,7 +9,7 @@ const emailAddressService = require('../email-address');
 const settingsHelpers = require('../settings-helpers');
 const emailAddressParser = require('../email-address/email-address-parser');
 const mail = require('../../lib/mail');
-const MailgunClient = require('../../lib/mailgun/mailgun-client');
+const { createBulkMailClient } = require('../../lib/bulk-mail');
 const config = require('../../../shared/config');
 const labs = require('../../../shared/labs');
 const { Automation, EmailDesignSetting, Newsletter } = require('../../models');
@@ -65,7 +65,7 @@ class MemberWelcomeEmailService {
   constructor({ t, dir, singleUseTokenProvider }) {
     emailAddressService.init();
     this.#transactionalMailer = new mail.GhostMailer();
-    this.#bulkMailer = new MailgunClient({ config, settings: settingsCache });
+    this.#bulkMailer = createBulkMailClient({ config, settings: settingsCache });
     this.#renderer = new MemberWelcomeEmailRenderer({ t, dir });
 
     const getSigninURL = (token) => {

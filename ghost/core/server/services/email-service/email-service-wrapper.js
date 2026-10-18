@@ -33,12 +33,13 @@ class EmailServiceWrapper {
     const { SendingStatusService } = require('./sending-status-service');
     const EmailSegmenter = require('./email-segmenter');
     const MailgunEmailProvider = require('./mailgun-email-provider');
+    const BrevoEmailProvider = require('./brevo-email-provider');
     const { DomainWarmingService } = require('./domain-warming-service');
 
     const { Post, Newsletter, Email, EmailBatch, EmailRecipient, Member } = require('../../models');
     const urlService = require('../url');
     const getRequiredUrlRelations = () => urlService.getRequiredRelations();
-    const MailgunClient = require('../../lib/mailgun/mailgun-client');
+    const { createBulkMailClient, isBrevoSelected } = require('../../lib/bulk-mail');
     const configService = require('../../../shared/config');
     const batchCreationConcurrency = configService.get('bulkEmail:batchCreationConcurrency');
     const settingsCache = require('../../../shared/settings-cache');
@@ -61,11 +62,10 @@ class EmailServiceWrapper {
     const emailAnalyticsJobs = require('../email-analytics/jobs');
     const { cachedImageSizeFromUrl } = require('../../lib/image');
 
-    // Mailgun client instance for email provider
-    const mailgunClient = new MailgunClient({
+    // Bulk mail client for the configured provider (Mailgun or Brevo)
+    const bulkMailClient = createBulkMailClient({
       config: configService,
       settings: settingsCache,
-      labs,
     });
     const i18nLanguage = settingsCache.get('locale') || 'en';
     const i18n = i18nLib(i18nLanguage, 'ghost');
@@ -75,10 +75,15 @@ class EmailServiceWrapper {
       i18n.changeLanguage(model.get('value'));
     });
 
-    const mailgunEmailProvider = new MailgunEmailProvider({
-      mailgunClient,
-      config: configService,
-    });
+    const emailProvider = isBrevoSelected(configService)
+      ? new BrevoEmailProvider({
+          brevoClient: bulkMailClient,
+          config: configService,
+        })
+      : new MailgunEmailProvider({
+          mailgunClient: bulkMailClient,
+          config: configService,
+        });
 
     const emailRenderer = new EmailRenderer({
       settingsCache,
@@ -104,7 +109,7 @@ class EmailServiceWrapper {
     });
 
     const sendingService = new SendingService({
-      emailProvider: mailgunEmailProvider,
+      emailProvider,
       emailRenderer,
       emailAddressService: emailAddressService.service,
       sentry,
