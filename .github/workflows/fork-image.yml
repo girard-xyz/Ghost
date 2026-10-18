@@ -1,0 +1,176 @@
+name: Fork Docker Image
+
+# Builds the `selfhost` target of Dockerfile.production and pushes it to GHCR,
+# where the Dokploy deployment pulls it from. Fork-local equivalent of
+# docker-nightly.yml: same build (admin assets built first and injected into the
+# context), single architecture (the Dokploy host is amd64), no nightly tags.
+#
+# The image is smoke-tested against a throwaway MySQL before anything is pushed,
+# because the deploy target migrates a production database on boot.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ghost/**'
+      - 'apps/**'
+      - 'koenig/**'
+      - 'docker/**'
+      - 'Dockerfile.production'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.nvmrc'
+      - '.github/workflows/fork-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: fork-image
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: 1
+  IMAGE: ghcr.io/girard-xyz/ghost
+
+jobs:
+  build:
+    name: Build and push selfhost image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The deploy stage packs content/themes/{casper,source} (submodules).
+          submodules: true
+
+      - name: Read Node version
+        run: echo "NODE_VERSION=$(cat .nvmrc)" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          store-cache: save
+
+      # Builds ghost/core/built/{admin,embed-renderer}, which the full/selfhost
+      # stages COPY from the build context.
+      - name: Build admin
+        run: pnpm nx run @tryghost/admin:build
+
+      - name: Determine build version
+        run: |
+          PKG_VERSION=$(jq -r .version ghost/package.json)
+          echo "GHOST_BUILD_VERSION=${PKG_VERSION}+${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          cleanup: false
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+
+      # Built into the local daemon first so it can be smoke-tested before
+      # anything is pushed; the push below is then a cache hit on every layer.
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          BUILDKIT_PROGRESS: plain
+        with:
+          context: .
+          file: Dockerfile.production
+          target: selfhost
+          platforms: linux/amd64
+          build-args: |
+            GHOST_BUILD_VERSION=${{ env.GHOST_BUILD_VERSION }}
+          load: true
+          tags: ghost-selfhost:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          docker network create smoke
+          docker run -d --name mysql --network smoke \
+            --tmpfs /var/lib/mysql \
+            -e MYSQL_DATABASE=ghost \
+            -e MYSQL_ROOT_PASSWORD=root \
+            --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot" \
+            --health-interval=2s \
+            --health-timeout=5s \
+            --health-retries=60 \
+            mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
+          for _ in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' mysql)" = "healthy" ] && break
+            sleep 2
+          done
+
+          # A named volume, as a self-hoster would use: exercises the
+          # entrypoint's chown, content seeding and privilege drop.
+          docker run -d --name ghost --network smoke -p 2368:2368 \
+            -v ghost-content:/home/ghost/content \
+            -e database__client=mysql \
+            -e database__connection__host=mysql \
+            -e database__connection__user=root \
+            -e database__connection__password=root \
+            -e database__connection__database=ghost \
+            ghost-selfhost:smoke
+
+          ok=
+          for _ in $(seq 1 90); do
+            if curl -fs -o /dev/null http://127.0.0.1:2368/; then ok=1; break; fi
+            sleep 2
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::Ghost did not start"
+            docker logs ghost
+            exit 1
+          fi
+
+          curl -fsS -o /dev/null http://127.0.0.1:2368/ghost/
+          docker exec ghost test -d /home/ghost/content/themes/casper
+          uid=$(docker exec ghost awk '/^Uid:/ { print $2 }' /proc/1/status)
+          if [ "$uid" != "1000" ]; then
+            echo "::error::Ghost is running as uid ${uid}, expected 1000"
+            exit 1
+          fi
+          echo "Smoke test passed"
+
+      - name: Show Ghost logs
+        if: failure()
+        run: docker logs ghost || true
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          BUILDKIT_PROGRESS: plain
+        with:
+          context: .
+          file: Dockerfile.production
+          target: selfhost
+          platforms: linux/amd64
+          build-args: |
+            GHOST_BUILD_VERSION=${{ env.GHOST_BUILD_VERSION }}
+          tags: |
+            ${{ env.IMAGE }}:main
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.title=Ghost (fork)
+            org.opencontainers.image.description=Ghost built from this fork for the Dokploy deployment.
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.GHOST_BUILD_VERSION }}
+          cache-from: type=gha
+          push: true
