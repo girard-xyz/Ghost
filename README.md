@@ -1,3 +1,30 @@
+> [!IMPORTANT]
+> **Fork note — Brevo bulk email.** This fork adds [Brevo](https://www.brevo.com/) as an
+> alternative provider for newsletter/bulk email. Mailgun remains the default: nothing changes
+> unless you set the two values below.
+
+<details>
+<summary>Brevo setup (fork addition)</summary>
+
+Set the provider and API key, as environment variables or in `config.production.json`:
+
+```bash
+bulkEmail__provider=brevo
+bulkEmail__brevo__apiKey=<your-brevo-api-key>
+```
+
+- **Bulk only.** Newsletter sending moves to Brevo; transactional mail (sign-in links, invites) keeps using the `mail`/SMTP config.
+- **Analytics keep working.** Delivered, opened, bounced, complained and unsubscribed events are polled from Brevo's event API; clicks are counted by Ghost's own link redirects; hard bounces still disable the member.
+- **Requires the server IP** on Brevo's [authorised IPs](https://app.brevo.com/security/authorised_ips) — Brevo rejects API calls from anywhere else.
+- **Free-plan quota** (e.g. 300/day) is shared between bulk and transactional sends.
+- Provider message ids are stored in Ghost's existing `mailgun_message_id` column (no database migration).
+- **Rollback:** delete both values — Mailgun is used again, no data changes.
+
+Implementation: [`ghost/core/server/lib/brevo/brevo-client.js`](ghost/core/server/lib/brevo/brevo-client.js)
+· client tests: [`ghost/test/unit/server/lib/brevo/`](ghost/test/unit/server/lib/brevo/).
+
+</details>
+
 &nbsp;
 <p align="center">
   <a href="https://ghost.org/#gh-light-mode-only" target="_blank">
