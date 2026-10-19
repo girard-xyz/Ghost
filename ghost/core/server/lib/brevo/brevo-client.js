@@ -35,6 +35,11 @@ const EVENT_MAP = {
 
 const dateOnly = (date) => date.toISOString().slice(0, 10);
 
+// Brevo rejects event windows over 90 days. The analytics cursor can be older
+// (for example after a provider switch), so keep one day of margin.
+const MAX_EVENT_RANGE_DAYS = 89;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 // Brevo takes {email, name}; the parser returns {address, name}
 const toBrevoAddress = (email) => {
   const parsed = emailAddressParser.parse(email);
@@ -283,8 +288,12 @@ module.exports = class BrevoClient {
       return;
     }
 
-    const startDate = dateOnly(begin ?? new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
-    const endDate = dateOnly(end ?? new Date());
+    const endAt = end ?? new Date();
+    const defaultBegin = new Date(Date.now() - 2 * DAY_MS);
+    const earliestBegin = new Date(endAt.getTime() - MAX_EVENT_RANGE_DAYS * DAY_MS);
+    const requestedBegin = begin ?? defaultBegin;
+    const startDate = dateOnly(requestedBegin > earliestBegin ? requestedBegin : earliestBegin);
+    const endDate = dateOnly(endAt);
     const wanted = wantedTypes ? new Set(wantedTypes) : null;
 
     let offset = 0;

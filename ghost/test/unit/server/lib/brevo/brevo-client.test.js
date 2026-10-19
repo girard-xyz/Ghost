@@ -379,6 +379,28 @@ describe('BrevoClient', function () {
       );
     });
 
+    it("clamps the request window to Brevo's 90-day maximum", async function () {
+      const fetchStub = sinon
+        .stub(globalThis, 'fetch')
+        .resolves(makeResponse({ body: { events: [] } }));
+      const client = new BrevoClient({
+        config: makeConfig(),
+        settings: { get: () => undefined },
+      });
+
+      await client.fetchEvents(
+        {
+          begin: new Date('2026-01-01T00:00:00Z'),
+          end: new Date('2026-06-01T00:00:00Z'),
+        },
+        sinon.stub().resolves(),
+      );
+
+      const url = new URL(fetchStub.firstCall.args[0]);
+      assert.equal(url.searchParams.get('startDate'), '2026-03-04');
+      assert.equal(url.searchParams.get('endDate'), '2026-06-01');
+    });
+
     it('paginates until the window is exhausted and reports no cursor', async function () {
       const fetchStub = sinon.stub(globalThis, 'fetch');
       fetchStub.onFirstCall().resolves(
